@@ -22,4 +22,4 @@ COPY . .
 EXPOSE 8000
 
 # gunicorn 엔트리포인트 (필요 시 -w, -k 값 조정)
-CMD ["bash","-lc","exec gunicorn -w 2 -k gthread -b 0.0.0.0:8000 app:app"]
+CMD ["gunicorn","-w","2","-k","gthread","-b","0.0.0.0:8000","app:app"]
