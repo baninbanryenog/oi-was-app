@@ -1,0 +1,89 @@
+name: Build & Push to GHCR + Bump ops-repo
+
+on:
+  push:
+    branches: [ "main" ]
+  workflow_dispatch:
+
+env:
+  IMAGE_NAME: ghcr.io/baninbanryenog/oi-was
+
+jobs:
+  build-push-and-bump:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      packages: write
+    steps:
+      - name: Checkout app-repo
+        uses: actions/checkout@v4
+
+      - name: Set SHORT_SHA
+        id: vars
+        run: echo "SHORT_SHA=${GITHUB_SHA::7}" >> $GITHUB_OUTPUT
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ secrets.GHCR_USERNAME }}
+          password: ${{ secrets.GHCR_TOKEN }}
+
+      - name: Build & Push image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: |
+            ${{ env.IMAGE_NAME }}:${{ steps.vars.outputs.SHORT_SHA }}
+            ${{ env.IMAGE_NAME }}:main
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      # ---- ops-repo 이미지 태그 바꾸기 ----
+      - name: Checkout ops-repo
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ secrets.OPS_REPO }}     # ex) baninbanryenog/argocd
+          token: ${{ secrets.OPS_REPO_PAT }}      # repo 쓰기 권한 있는 PAT
+          path: ops
+
+      - name: Bump image tag in ops-repo (k8s/deployment.yaml)
+        working-directory: ops
+        shell: bash
+        run: |
+          set -euo pipefail
+          FILE="k8s/deployment.yaml"
+          NEW="${IMAGE_NAME}:${{ steps.vars.outputs.SHORT_SHA }}"
+
+          if [[ ! -f "$FILE" ]]; then
+            echo "::error:: $FILE not found"; exit 1
+          fi
+
+          echo "New image = $NEW"
+
+          # 1) 대상 이미지가 이미 ghcr 경로라면 태그만 바꿔줌
+          if grep -qE 'image:\s*ghcr\.io/baninbanryenog/oi-was:' "$FILE"; then
+            sed -i -E "s|(image:\s*ghcr\.io/baninbanryenog/oi-was:).*|\1${{ steps.vars.outputs.SHORT_SHA }}|" "$FILE"
+          else
+            # 2) 아직 데모 이미지(nginxdemos/hello 등)라면 통째로 교체
+            sed -i -E "s|^(\s*image:\s*).*|\1${NEW}|" "$FILE"
+          fi
+
+          echo "----- diff -----"
+          git --no-pager diff || true
+
+      - name: Commit & Push
+        working-directory: ops
+        shell: bash
+        run: |
+          set -e
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          if ! git diff --quiet; then
+            git add -A
+            git commit -m "chore(ci): bump image to ${{ env.IMAGE_NAME }}:${{ steps.vars.outputs.SHORT_SHA }}"
+            git push
+          else
+            echo "No changes to commit."
+          fi
