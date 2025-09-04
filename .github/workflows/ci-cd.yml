@@ -52,6 +52,7 @@ jobs:
           repository: ${{ secrets.OPS_REPO }}     # ex) baninbanryenog/argocd
           token: ${{ secrets.OPS_REPO_PAT }}      # repo 쓰기 권한 있는 PAT
           path: ops
+          fetch-depth: 0
 
       - name: Bump image tag in ops-repo (k8s/deployment.yaml)
         working-directory: ops
