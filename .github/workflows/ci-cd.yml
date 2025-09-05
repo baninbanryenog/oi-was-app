@@ -1,41 +1,27 @@
 name: Build & Push to GHCR + Bump ops-repo
-
-on:
-  push:
-    branches: [ "main" ]
-  workflow_dispatch:
-
+on: { push: { branches: ["main"] }, workflow_dispatch: {} }
 env:
-  IMAGE_NAME: ghcr.io/baninbanryenog/oi-was
+  IMAGE_NAME: ghcr.io/<OWNER>/oi-was   # ← 소유자 맞게
 
 jobs:
   build-push-and-bump:
     runs-on: ubuntu-latest
-    permissions:
-      contents: write
-      packages: write
+    permissions: { contents: write, packages: write }
     steps:
-      - name: Checkout app-repo
-        uses: actions/checkout@v4
-
-      - name: Set SHORT_SHA
-        id: vars
+      - uses: actions/checkout@v4
+      - id: vars
         run: echo "SHORT_SHA=${GITHUB_SHA::7}" >> $GITHUB_OUTPUT
 
-      - name: Log in to GHCR
-        uses: docker/login-action@v3
+      - uses: docker/login-action@v3
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-        with:
-          install: true
-          
-      - name: Build & Push image
-        uses: docker/build-push-action@v6
+      - uses: docker/setup-buildx-action@v3
+        with: { install: true }
+
+      - uses: docker/build-push-action@v6
         with:
           context: .
           push: true
@@ -45,51 +31,24 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-      # ---- ops-repo 이미지 태그 바꾸기 ----
+      # ops-repo 수정
       - name: Checkout ops-repo
         uses: actions/checkout@v4
         with:
-          repository: ${{ secrets.OPS_REPO }}     # ex) baninbanryenog/argocd
-          token: ${{ secrets.OPS_REPO_PAT }}      # repo 쓰기 권한 있는 PAT
+          repository: ${{ secrets.OPS_REPO }}     # ex) <OWNER>/k8s
+          token: ${{ secrets.OPS_REPO_PAT }}      # repo 권한 PAT
           path: ops
           fetch-depth: 0
 
-      - name: Bump image tag in ops-repo (k8s/deployment.yaml)
+      - name: Bump image tag
         working-directory: ops
         shell: bash
         run: |
           set -euo pipefail
           FILE="k8s/deployment.yaml"
-          NEW="${IMAGE_NAME}:${{ steps.vars.outputs.SHORT_SHA }}"
-
-          if [[ ! -f "$FILE" ]]; then
-            echo "::error:: $FILE not found"; exit 1
-          fi
-
-          echo "New image = $NEW"
-
-          # 1) 대상 이미지가 이미 ghcr 경로라면 태그만 바꿔줌
-          if grep -qE 'image:\s*ghcr\.io/baninbanryenog/oi-was:' "$FILE"; then
-            sed -i -E "s|(image:\s*ghcr\.io/baninbanryenog/oi-was:).*|\1${{ steps.vars.outputs.SHORT_SHA }}|" "$FILE"
-          else
-            # 2) 아직 데모 이미지(nginxdemos/hello 등)라면 통째로 교체
-            sed -i -E "s|^(\s*image:\s*).*|\1${NEW}|" "$FILE"
-          fi
-
-          echo "----- diff -----"
-          git --no-pager diff || true
-
-      - name: Commit & Push
-        working-directory: ops
-        shell: bash
-        run: |
-          set -e
+          NEW="${{ env.IMAGE_NAME }}:${{ steps.vars.outputs.SHORT_SHA }}"
+          sed -i -E 's|^(\s*image:\s*).*|\1'"$NEW"'|' "$FILE"
           git config user.name  "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          if ! git diff --quiet; then
-            git add -A
-            git commit -m "chore(ci): bump image to ${{ env.IMAGE_NAME }}:${{ steps.vars.outputs.SHORT_SHA }}"
-            git push
-          else
-            echo "No changes to commit."
-          fi
+          git add "$FILE"; git commit -m "chore(ci): $NEW" || echo "no change"
+          git push || true
