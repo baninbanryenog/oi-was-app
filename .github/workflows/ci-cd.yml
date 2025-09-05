@@ -1,7 +1,7 @@
 name: Build & Push to GHCR + Bump ops-repo
 on: { push: { branches: ["main"] }, workflow_dispatch: {} }
 env:
-  IMAGE_NAME: ghcr.io/<OWNER>/oi-was   # ← 소유자 맞게
+  IMAGE_NAME: ghcr.io/baninbanryenog/oi-was   # ← 소유자 맞게
 
 jobs:
   build-push-and-bump:
